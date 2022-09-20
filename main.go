@@ -13,14 +13,22 @@ import (
 )
 
 var (
-	docStyle = lipgloss.NewStyle().Margin(1, 2)
-	bookMap  map[string]int
-	instance *readwise.Instance
+	docStyle  = lipgloss.NewStyle().Margin(1, 2)
+	bookMap   map[string]int
+	bookItems []list.Item
+	instance  *readwise.Instance
+	prev      prevItems
 )
 
 type item struct {
 	title, desc string
 	list.Item
+}
+
+type prevItems struct {
+	items    []list.Item
+	title    string
+	prevItem *prevItems
 }
 
 func (i item) Title() string       { return i.title }
@@ -42,21 +50,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "enter":
-			cursor := m.list.Cursor()
-			itemTest := m.list.Items()[cursor]
+			itemTest := m.list.SelectedItem()
 			switch bookType := itemTest.(type) {
 			case item:
 				bookID := bookMap[bookType.Title()]
 				highlights, err := instance.GetHighlightsForBook(bookID)
 				if err != nil {
 					fmt.Println(err)
-					os.Exit(1)
 				}
-
-				m.list.SetItems(adaptHighlights(highlights))
-				m.list.Title = bookType.title
+				tempPrev := prev
+				prev.prevItem = &tempPrev
+				prev.title = bookType.title
+				prev.items = adaptHighlights(highlights)
+				m.list.SetItems(prev.items)
+				m.list.Title = prev.title
+				m.list.ResetFilter()
 			}
-			// Update to the tags of a book
+		case "b", "backspace":
+			// if _, ok := bookMap[m.list.Title]; ok {
+			// 	m.list.SetItems(bookItems)
+			// 	m.list.Title = "Books"
+			// }
+			if prev.prevItem != nil {
+				m.list.SetItems(prev.prevItem.items)
+				m.list.Title = prev.prevItem.title
+				prev = *prev.prevItem
+			}
 		}
 	case tea.WindowSizeMsg:
 		h, v := docStyle.GetFrameSize()
@@ -112,9 +131,12 @@ func main() {
 		log.Fatal("Failed to get books")
 	}
 	bookMap = generateBookMap(bookList)
-	items := adaptBookList(bookList)
+	bookItems = adaptBookList(bookList)
+	prev.items = bookItems
+	prev.title = "Books"
+	prev.prevItem = nil
 
-	m := model{list: list.New(items, list.NewDefaultDelegate(), 0, 0)}
+	m := model{list: list.New(bookItems, list.NewDefaultDelegate(), 0, 0)}
 	m.list.Title = "Books"
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
